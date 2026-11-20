@@ -1,23 +1,25 @@
 /**
- * High-Precision Computer Vision Gesture Recognition System
- * for DRIVE INDIA 3D: Real-time dual-hand steering, fist throttle,
- * open-palm brake, pinch gear selection, double-fist horn, and indicators.
+ * High-Speed, Forgiving Computer Vision Gesture Recognition System
+ * for DRIVE INDIA 3D: Ultra-fast two-hand or single-hand steering,
+ * relaxed fist throttle, easy open-palm brake, pinch/point gear shift, and horn.
  */
 
 export class GestureRecognition {
   constructor(config = {}) {
-    this.steeringSensitivity = config.steeringSensitivity || 1.6;
-    this.steeringDeadzone = config.steeringDeadzone || 0.06;
-    this.throttleSensitivity = config.throttleSensitivity || 1.2;
+    this.steeringSensitivity = config.steeringSensitivity || 1.8;
+    this.steeringDeadzone = config.steeringDeadzone || 0.035; // Lower deadzone for instant reaction
+    this.throttleSensitivity = config.throttleSensitivity || 1.3;
 
-    // Smoothed values
+    // Fast smoothing values (higher factor = snappier response)
     this.smoothedSteer = 0;
     this.smoothedThrottle = 0;
     this.smoothedBrake = 0;
 
-    // State machine & latches
+    // Latches & debouncing
     this.lastPinchTime = 0;
     this.pinchLatched = false;
+    this.lastPointTime = 0;
+    this.pointLatched = false;
     this.lastCameraGestureTime = 0;
     this.cameraLatched = false;
 
@@ -49,104 +51,123 @@ export class GestureRecognition {
   }
 
   /**
-   * Helper: Euclidean distance between two 2D/3D landmarks
+   * Fast Euclidean distance
    */
   dist(p1, p2) {
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
-    const dz = (p1.z || 0) - (p2.z || 0);
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return Math.hypot(dx, dy);
   }
 
   /**
-   * Helper: Check if hand is a closed fist
-   * Fingertips (8, 12, 16, 20) are retracted close to MCPs (5, 9, 13, 17) and wrist (0)
+   * Easy & Forgiving Fist Check:
+   * Considers it a fist if at least 2 of the 4 fingers are curled towards palm,
+   * or if fingertip is close to MCP. Does not require stiff/perfect clench.
    */
   isFist(landmarks) {
     if (!landmarks || landmarks.length < 21) return false;
     const wrist = landmarks[0];
-    
-    // Distances from tips to wrist
-    const dIndex = this.dist(landmarks[8], wrist);
-    const dMiddle = this.dist(landmarks[12], wrist);
-    const dRing = this.dist(landmarks[16], wrist);
-    const dPinky = this.dist(landmarks[20], wrist);
 
-    // Distances from MCPs to wrist
-    const dIndexMcp = this.dist(landmarks[5], wrist);
-    const dMiddleMcp = this.dist(landmarks[9], wrist);
+    // Check index, middle, ring, pinky tips vs their MCPs
+    let curledCount = 0;
+    const fingers = [
+      { tip: 8, mcp: 5 },
+      { tip: 12, mcp: 9 },
+      { tip: 16, mcp: 13 },
+      { tip: 20, mcp: 17 }
+    ];
 
-    // In a fist, fingertips curl back towards palm (closer than or near MCP distance)
-    return (
-      dIndex < dIndexMcp * 1.15 &&
-      dMiddle < dMiddleMcp * 1.15 &&
-      dRing < dIndexMcp * 1.15 &&
-      dPinky < dIndexMcp * 1.15
-    );
+    for (const f of fingers) {
+      const dTip = this.dist(landmarks[f.tip], wrist);
+      const dMcp = this.dist(landmarks[f.mcp], wrist);
+      // If fingertip is close to or below MCP distance from wrist
+      if (dTip < dMcp * 1.25) {
+        curledCount++;
+      }
+    }
+
+    // Relaxed: 2 or more curled fingers count as a fist/throttle gesture!
+    return curledCount >= 2;
   }
 
   /**
-   * Helper: Check if hand is an open palm facing the camera
+   * Easy Open Palm Check:
+   * Relaxed: At least 3 fingers extended away from wrist past the MCPs.
    */
   isOpenPalm(landmarks) {
     if (!landmarks || landmarks.length < 21) return false;
     const wrist = landmarks[0];
 
-    const dIndex = this.dist(landmarks[8], wrist);
-    const dMiddle = this.dist(landmarks[12], wrist);
-    const dRing = this.dist(landmarks[16], wrist);
-    const dPinky = this.dist(landmarks[20], wrist);
+    let extendedCount = 0;
+    const fingers = [
+      { tip: 8, mcp: 5 },
+      { tip: 12, mcp: 9 },
+      { tip: 16, mcp: 13 },
+      { tip: 20, mcp: 17 }
+    ];
 
-    const dIndexMcp = this.dist(landmarks[5], wrist);
-    const dMiddleMcp = this.dist(landmarks[9], wrist);
+    for (const f of fingers) {
+      const dTip = this.dist(landmarks[f.tip], wrist);
+      const dMcp = this.dist(landmarks[f.mcp], wrist);
+      if (dTip > dMcp * 1.3) {
+        extendedCount++;
+      }
+    }
 
-    // In open palm, tips are well extended past the MCPs
-    return (
-      dIndex > dIndexMcp * 1.45 &&
-      dMiddle > dMiddleMcp * 1.45 &&
-      dRing > dIndexMcp * 1.4 &&
-      dPinky > dIndexMcp * 1.3
-    );
+    return extendedCount >= 3;
   }
 
   /**
-   * Helper: Detect Pinch between thumb tip (4) and index tip (8)
+   * Relaxed Pinch Check:
+   * Distance between thumb tip (4) and index tip (8) < 0.095 (generous distance)
    */
   isPinch(landmarks) {
     if (!landmarks || landmarks.length < 21) return false;
     const thumbTip = landmarks[4];
     const indexTip = landmarks[8];
-    const pinchDist = this.dist(thumbTip, indexTip);
-    return pinchDist < 0.065;
+    return this.dist(thumbTip, indexTip) < 0.095;
   }
 
   /**
-   * Helper: Detect 3-Fingers gesture (Index, Middle, Ring extended, Pinky & Thumb curled)
+   * Easy Pointing Gesture:
+   * Index finger extended, other fingers curled.
+   */
+  isPointing(landmarks) {
+    if (!landmarks || landmarks.length < 21) return false;
+    const wrist = landmarks[0];
+    const dIndex = this.dist(landmarks[8], wrist);
+    const dIndexMcp = this.dist(landmarks[5], wrist);
+    const dMiddle = this.dist(landmarks[12], wrist);
+    const dMiddleMcp = this.dist(landmarks[9], wrist);
+
+    // Index is well extended, middle is curled
+    const indexExtended = dIndex > dIndexMcp * 1.35;
+    const middleCurled = dMiddle < dMiddleMcp * 1.25;
+    return indexExtended && middleCurled;
+  }
+
+  /**
+   * Easy 3-Fingers Check (Index + Middle + Ring up)
    */
   isThreeFingers(landmarks) {
     if (!landmarks || landmarks.length < 21) return false;
     const wrist = landmarks[0];
-    const dThumb = this.dist(landmarks[4], wrist);
     const dIndex = this.dist(landmarks[8], wrist);
     const dMiddle = this.dist(landmarks[12], wrist);
     const dRing = this.dist(landmarks[16], wrist);
     const dPinky = this.dist(landmarks[20], wrist);
-
     const dMcp = this.dist(landmarks[9], wrist);
 
     return (
-      dIndex > dMcp * 1.4 &&
-      dMiddle > dMcp * 1.4 &&
-      dRing > dMcp * 1.35 &&
-      dPinky < dMcp * 1.2 &&
-      dThumb < dMcp * 1.25
+      dIndex > dMcp * 1.3 &&
+      dMiddle > dMcp * 1.3 &&
+      dRing > dMcp * 1.25 &&
+      dPinky < dMcp * 1.3
     );
   }
 
   /**
-   * Process landmarks from MediaPipe Hands results
-   * @param {Object} results MediaPipe results object
-   * @returns {Object} Processed gesture state
+   * Process landmarks with high speed & forgiving criteria
    */
   process(results) {
     const now = performance.now();
@@ -172,10 +193,10 @@ export class GestureRecognition {
     };
 
     if (!results || !results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-      // Smooth back to neutral when hands disappear
-      this.smoothedSteer *= 0.85;
-      this.smoothedThrottle *= 0.8;
-      this.smoothedBrake *= 0.8;
+      // Snappy decay to neutral when hands drop
+      this.smoothedSteer *= 0.75;
+      this.smoothedThrottle *= 0.7;
+      this.smoothedBrake *= 0.7;
       g.steerAngle = this.smoothedSteer;
       g.throttle = this.smoothedThrottle;
       g.brake = this.smoothedBrake;
@@ -184,35 +205,24 @@ export class GestureRecognition {
     }
 
     const hands = results.multiHandLandmarks;
-    const handednessList = results.multiHandedness || [];
-
     let leftHand = null;
     let rightHand = null;
 
-    // Distinguish left vs right hands
-    // MediaPipe in selfie mode mirrors, so user's physical left hand appears on screen left (x < 0.5)
+    // Distinguish left vs right hands based on screen position
     for (let i = 0; i < hands.length; i++) {
       const lm = hands[i];
       const wrist = lm[0];
-      const label = handednessList[i]?.label;
-
-      // Primary check based on screen position x (mirrored selfie camera)
-      // Screen Left (x < 0.5) is user's real Left Hand
       if (wrist.x < 0.5) {
-        if (!leftHand || wrist.x < leftHand[0].x) {
-          leftHand = lm;
-        }
+        if (!leftHand || wrist.x < leftHand[0].x) leftHand = lm;
       } else {
-        if (!rightHand || wrist.x > rightHand[0].x) {
-          rightHand = lm;
-        }
+        if (!rightHand || wrist.x > rightHand[0].x) rightHand = lm;
       }
     }
 
-    // Fallback if both hands were placed slightly to one side of midline
+    // Fallback if two hands are slightly shifted to one side
     if (!leftHand && hands.length === 2) {
-      leftHand = hands[0].x < hands[1].x ? hands[0] : hands[1];
-      rightHand = hands[0].x < hands[1].x ? hands[1] : hands[0];
+      leftHand = hands[0][0].x < hands[1][0].x ? hands[0] : hands[1];
+      rightHand = hands[0][0].x < hands[1][0].x ? hands[1] : hands[0];
     } else if (hands.length === 1) {
       if (hands[0][0].x < 0.5) leftHand = hands[0];
       else rightHand = hands[0];
@@ -221,128 +231,143 @@ export class GestureRecognition {
     g.leftHandPresent = !!leftHand;
     g.rightHandPresent = !!rightHand;
 
-    // --- 1. TWO-HAND STEERING CONTROL ---
+    // --- 1. EASY STEERING (DUAL HAND OR SINGLE HAND TILT FALLBACK) ---
     if (leftHand && rightHand) {
-      const leftWrist = leftHand[0];
-      const rightWrist = rightHand[0];
-      g.leftHandPos = leftWrist;
-      g.rightHandPos = rightWrist;
+      // Standard two-hand steering wheel
+      g.leftHandPos = leftHand[0];
+      g.rightHandPos = rightHand[0];
 
-      // Center points (wrist + middle MCP midpoint)
-      const leftCenter = {
-        x: (leftHand[0].x + leftHand[9].x) * 0.5,
-        y: (leftHand[0].y + leftHand[9].y) * 0.5
-      };
-      const rightCenter = {
-        x: (rightHand[0].x + rightHand[9].x) * 0.5,
-        y: (rightHand[0].y + rightHand[9].y) * 0.5
-      };
+      const leftY = (leftHand[0].y + leftHand[9].y) * 0.5;
+      const rightY = (rightHand[0].y + rightHand[9].y) * 0.5;
+      const leftX = (leftHand[0].x + leftHand[9].x) * 0.5;
+      const rightX = (rightHand[0].x + rightHand[9].x) * 0.5;
 
-      // Angle calculation between the two hands:
-      // Note: in screen space, y increases downwards.
-      // Clockwise turn: right hand moves down (y increases), left hand moves up (y decreases)
-      // dy = yRight - yLeft > 0
-      const dx = rightCenter.x - leftCenter.x;
-      const dy = rightCenter.y - leftCenter.y;
-      
-      const rawAngleRad = Math.atan2(dy, Math.max(0.15, dx));
+      const dy = rightY - leftY;
+      const dx = Math.max(0.12, rightX - leftX);
+
+      // Angle calculation
+      const rawAngleRad = Math.atan2(dy, dx);
       const degrees = rawAngleRad * (180 / Math.PI);
 
-      // Deadzone filtering
-      let normalizedSteer = 0;
+      let targetSteer = 0;
       if (Math.abs(rawAngleRad) > this.steeringDeadzone) {
         const sign = rawAngleRad > 0 ? 1 : -1;
-        const adjustedAngle = (Math.abs(rawAngleRad) - this.steeringDeadzone) * this.steeringSensitivity;
-        normalizedSteer = Math.min(1.0, Math.max(-1.0, sign * adjustedAngle));
+        const delta = Math.abs(rawAngleRad) - this.steeringDeadzone;
+        targetSteer = Math.min(1.0, Math.max(-1.0, sign * delta * this.steeringSensitivity));
       }
 
-      // Smooth steering with exponential moving average
-      this.smoothedSteer += (normalizedSteer - this.smoothedSteer) * 0.35;
+      // Fast, responsive exponential smoothing (0.55 factor = near instantaneous response)
+      this.smoothedSteer += (targetSteer - this.smoothedSteer) * 0.55;
       g.steerAngle = this.smoothedSteer;
       g.steerAngleDegrees = degrees;
-      g.isSteering = Math.abs(this.smoothedSteer) > 0.08;
-    } else {
-      this.smoothedSteer *= 0.8;
+      g.isSteering = Math.abs(this.smoothedSteer) > 0.05;
+    } else if (leftHand || rightHand) {
+      // SINGLE-HAND STEERING FALLBACK:
+      // Even if one hand dips off camera, you can steer with the single remaining hand!
+      const activeHand = rightHand || leftHand;
+      const wrist = activeHand[0];
+      const middleMcp = activeHand[9];
+      
+      // Hand tilt angle (wrist to middle knuckle)
+      const tiltX = middleMcp.x - wrist.x;
+      const tiltY = middleMcp.y - wrist.y;
+      const handAngle = Math.atan2(tiltX, -tiltY); // angle from vertical
+      
+      let targetSteer = 0;
+      if (Math.abs(handAngle) > 0.12) {
+        targetSteer = Math.min(1.0, Math.max(-1.0, handAngle * 1.5));
+      }
+
+      this.smoothedSteer += (targetSteer - this.smoothedSteer) * 0.5;
       g.steerAngle = this.smoothedSteer;
+      g.steerAngleDegrees = handAngle * (180 / Math.PI);
+      g.isSteering = Math.abs(this.smoothedSteer) > 0.05;
     }
 
-    // --- 2. ACCELERATOR CONTROL (Right Hand Closed Fist / Forward Thrust) ---
-    if (rightHand) {
-      const rightFist = this.isFist(rightHand);
-      if (rightFist) {
+    // --- 2. EASY ACCELERATOR (RIGHT HAND FIST OR THRUST) ---
+    const throttleHand = rightHand || (!leftHand ? null : null);
+    if (throttleHand) {
+      const isFist = this.isFist(throttleHand);
+      if (isFist) {
         g.isAccelerating = true;
-        this.smoothedThrottle += (1.0 - this.smoothedThrottle) * 0.28;
+        this.smoothedThrottle += (1.0 - this.smoothedThrottle) * 0.45; // Snappy gas response
       } else {
-        this.smoothedThrottle *= 0.8;
+        this.smoothedThrottle *= 0.65;
       }
       g.throttle = this.smoothedThrottle;
     } else {
-      this.smoothedThrottle *= 0.75;
+      this.smoothedThrottle *= 0.65;
       g.throttle = this.smoothedThrottle;
     }
 
-    // --- 3. BRAKE CONTROL (Left Hand Open Palm) ---
+    // --- 3. EASY BRAKE (LEFT HAND OPEN PALM) ---
     if (leftHand) {
-      const leftOpen = this.isOpenPalm(leftHand);
-      if (leftOpen) {
+      const isOpen = this.isOpenPalm(leftHand);
+      if (isOpen) {
         g.isBraking = true;
-        this.smoothedBrake += (1.0 - this.smoothedBrake) * 0.35;
+        this.smoothedBrake += (1.0 - this.smoothedBrake) * 0.55; // Fast braking
       } else {
-        this.smoothedBrake *= 0.75;
+        this.smoothedBrake *= 0.65;
       }
       g.brake = this.smoothedBrake;
     } else {
-      this.smoothedBrake *= 0.75;
+      this.smoothedBrake *= 0.65;
       g.brake = this.smoothedBrake;
     }
 
-    // --- 4. HORN CONTROL (Double Fist) ---
+    // --- 4. EASY HORN (DOUBLE FIST OR PALM FORWARD) ---
     if (leftHand && rightHand) {
-      const leftFist = this.isFist(leftHand);
-      const rightFist = this.isFist(rightHand);
-      if (leftFist && rightFist) {
+      if (this.isFist(leftHand) && this.isFist(rightHand)) {
         g.isHorn = true;
       }
     }
 
-    // --- 5. TURN INDICATORS (Raised Hand above neutral plane) ---
-    // If left hand is held high up (y < 0.28) while right hand is lower
-    if (leftHand && leftHand[0].y < 0.28) {
+    // --- 5. TURN INDICATORS (EASY RAISED HAND) ---
+    if (leftHand && leftHand[0].y < 0.38) {
       g.isLeftIndicator = true;
     }
-    if (rightHand && rightHand[0].y < 0.28) {
+    if (rightHand && rightHand[0].y < 0.38) {
       g.isRightIndicator = true;
     }
 
-    // --- 6. GEAR SHIFTING (Right Hand Pinch Gesture) ---
-    if (rightHand) {
-      const pinching = this.isPinch(rightHand);
+    // --- 6. EASY GEAR SHIFTING (PINCH OR POINTING GESTURE) ---
+    const gearHand = rightHand || leftHand;
+    if (gearHand) {
+      const pinching = this.isPinch(gearHand);
+      const pointing = this.isPointing(gearHand);
       g.isPinching = pinching;
 
       if (pinching) {
-        if (!this.pinchLatched && (now - this.lastPinchTime > 450)) {
+        if (!this.pinchLatched && (now - this.lastPinchTime > 350)) {
           this.pinchLatched = true;
           this.lastPinchTime = now;
-          // Trigger gear change request
-          // If hand is in upper half of view, shift UP; if lower half, shift DOWN
-          const y = rightHand[8].y;
-          if (y < 0.45) {
-            g.pinchGearRequested = 'UP';
-          } else if (y > 0.65) {
-            g.pinchGearRequested = 'DOWN';
-          } else {
-            g.pinchGearRequested = 'NEXT';
-          }
+          const y = gearHand[8].y;
+          if (y < 0.45) g.pinchGearRequested = 'UP';
+          else if (y > 0.65) g.pinchGearRequested = 'DOWN';
+          else g.pinchGearRequested = 'NEXT';
         }
       } else {
         this.pinchLatched = false;
       }
+
+      // Pointing up or down shifts gear as well!
+      if (pointing) {
+        if (!this.pointLatched && (now - this.lastPointTime > 450)) {
+          this.pointLatched = true;
+          this.lastPointTime = now;
+          const y = gearHand[8].y;
+          if (y < 0.4) g.pinchGearRequested = 'UP';
+          else g.pinchGearRequested = 'NEXT';
+        }
+      } else {
+        this.pointLatched = false;
+      }
     }
 
-    // --- 7. CAMERA SWITCH GESTURE (3 Fingers Extended on Either Hand) ---
+    // --- 7. CAMERA SWITCH GESTURE (3 FINGERS UP) ---
     const leftThree = leftHand && this.isThreeFingers(leftHand);
     const rightThree = rightHand && this.isThreeFingers(rightHand);
-    if ((leftThree || rightThree) && (now - this.lastCameraGestureTime > 900)) {
+    if ((leftThree || rightThree) && (now - this.lastCameraGestureTime > 750)) {
       if (!this.cameraLatched) {
         g.cameraToggleRequested = true;
         this.cameraLatched = true;
@@ -352,21 +377,19 @@ export class GestureRecognition {
       this.cameraLatched = false;
     }
 
-    // Summary description for HUD
+    // Concise, clear summary for HUD
     const actions = [];
-    if (g.isHorn) actions.push('🔊 HORN (Double Fist)');
-    else {
-      if (g.isBraking) actions.push('🛑 BRAKING (Left Open Palm)');
-      if (g.isAccelerating) actions.push('⚡ ACCELERATING (Right Fist)');
-    }
+    if (g.isHorn) actions.push('📢 HORN');
+    if (g.isBraking) actions.push('🛑 BRAKING');
+    if (g.isAccelerating) actions.push('⚡ GAS');
     if (g.isSteering) {
-      actions.push(g.steerAngle > 0 ? '↪ STEERING RIGHT' : '↩ STEERING LEFT');
+      actions.push(g.steerAngle > 0 ? '↪ RIGHT' : '↩ LEFT');
     }
-    if (g.isPinching) actions.push('⚙ PINCH (Gear Shift)');
-    if (g.isLeftIndicator) actions.push('⬅ LEFT INDICATOR');
-    if (g.isRightIndicator) actions.push('➡ RIGHT INDICATOR');
+    if (g.isPinching) actions.push('⚙ PINCH (Gear)');
+    if (g.isLeftIndicator) actions.push('⬅ LEFT IND');
+    if (g.isRightIndicator) actions.push('➡ RIGHT IND');
 
-    g.summaryText = actions.length > 0 ? actions.join(' | ') : 'Hands Ready • Neutral';
+    g.summaryText = actions.length > 0 ? actions.join(' • ') : 'Hands Ready • Neutral';
     this.currentGestures = g;
     return g;
   }

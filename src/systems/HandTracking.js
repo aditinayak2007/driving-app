@@ -111,9 +111,9 @@ export class HandTrackingService {
 
       this.hands.setOptions({
         maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        modelComplexity: 0, // 0 = Lite (Fastest inference, ultra-low latency)
+        minDetectionConfidence: 0.35, // Faster lock-on
+        minTrackingConfidence: 0.35
       });
 
       this.hands.onResults((results) => this.handleResults(results));
@@ -147,11 +147,11 @@ export class HandTrackingService {
 
     let stream = null;
     try {
-      // Primary attempt: standard user-facing webcam
+      // Primary attempt: fast lightweight resolution for instant MediaPipe CV
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 480 },
+          height: { ideal: 360 },
           facingMode: 'user'
         },
         audio: false
@@ -195,16 +195,20 @@ export class HandTrackingService {
 
   startFrameLoop() {
     if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+    let isBusy = false;
 
     const processFrame = async () => {
       if (!this.isTracking) return;
 
-      if (this.videoElement && this.videoElement.readyState >= 2) {
+      if (!isBusy && this.videoElement && this.videoElement.readyState >= 2) {
         if (this.hands && this.isMediaPipeReady) {
+          isBusy = true;
           try {
             await this.hands.send({ image: this.videoElement });
           } catch (e) {
             // skip dropped frame
+          } finally {
+            isBusy = false;
           }
         }
       }

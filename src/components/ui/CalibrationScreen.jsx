@@ -47,13 +47,13 @@ export default function CalibrationScreen({
         satisfied = gestures?.rightHandPresent;
         break;
       case 'steering':
-        satisfied = gestures?.leftHandPresent && gestures?.rightHandPresent && Math.abs(gestures?.steerAngle || 0) < 0.2;
+        satisfied = (gestures?.leftHandPresent || gestures?.rightHandPresent);
         break;
       case 'steerLeft':
-        satisfied = gestures?.steerAngle < -0.3;
+        satisfied = gestures?.steerAngle < -0.15;
         break;
       case 'steerRight':
-        satisfied = gestures?.steerAngle > 0.3;
+        satisfied = gestures?.steerAngle > 0.15;
         break;
       case 'accel':
         satisfied = gestures?.isAccelerating;
@@ -62,7 +62,7 @@ export default function CalibrationScreen({
         satisfied = gestures?.isBraking;
         break;
       case 'gear':
-        satisfied = gestures?.isPinching;
+        satisfied = gestures?.isPinching || gestures?.pinchGearRequested;
         break;
       case 'horn':
         satisfied = gestures?.isHorn;
@@ -73,12 +73,12 @@ export default function CalibrationScreen({
 
     if (satisfied) {
       setStepSuccess(prev => ({ ...prev, [step.id]: true }));
-      // Advance to next step after brief hold
+      // Advance quickly to next step
       const timeout = setTimeout(() => {
         if (currentStepIndex < CALIBRATION_STEPS.length - 1) {
           setCurrentStepIndex(c => c + 1);
         }
-      }, 700);
+      }, 400);
       return () => clearTimeout(timeout);
     }
   }, [currentStepIndex, gestures, step]);
