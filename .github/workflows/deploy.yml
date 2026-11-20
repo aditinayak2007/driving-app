@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy DRIVE INDIA 3D to GitHub Pages
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: 'pages'
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -24,16 +24,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci
 
-      - name: Build
+      - name: Build Project
         run: npm run build
 
       - name: Setup Pages

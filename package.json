@@ -1,7 +1,8 @@
 {
-  "name": "ar-drive",
+  "name": "driving-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "homepage": "https://aditinayak2007.github.io/driving-app/",
   "type": "module",
   "scripts": {
     "dev": "vite",
